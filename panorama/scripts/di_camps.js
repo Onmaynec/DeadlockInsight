@@ -7,6 +7,8 @@
 
     var lastScan = 0;
     var minimapCache = null;
+    var minimapContainerCache = null;
+    var minimapBoxCache = null;
 
     function getNeutralType(panel) {
         if (!Core.isValidPanel(panel)) return null;
@@ -17,17 +19,26 @@
         return null;
     }
 
-    function getMinimap(root) {
-        if (Core.isValidPanel(minimapCache)) return minimapCache;
-        if (!Core.isValidPanel(root)) return null;
+    function refreshMinimapRefs(root) {
+        if (!Core.isValidPanel(root)) return false;
 
         try {
-            minimapCache = root.FindChildTraverse("hud_minimap");
+            if (!Core.isValidPanel(minimapCache)) {
+                minimapCache = root.FindChildTraverse("hud_minimap");
+            }
+            if (!Core.isValidPanel(minimapContainerCache)) {
+                minimapContainerCache = root.FindChildTraverse("HudMinimapContainer");
+            }
+            if (!Core.isValidPanel(minimapBoxCache)) {
+                minimapBoxCache = root.FindChildTraverse("minimap_container");
+            }
         } catch (e) {
-            minimapCache = null;
+            return false;
         }
 
-        return minimapCache;
+        return Core.isValidPanel(minimapCache) &&
+            Core.isValidPanel(minimapContainerCache) &&
+            Core.isValidPanel(minimapBoxCache);
     }
 
     function keyFor(type, x, y, panel) {
@@ -40,27 +51,53 @@
         return type + "::" + rx + "::" + ry;
     }
 
+    function positionInOverlay(panel) {
+        var boxW = Number(minimapBoxCache.actuallayoutwidth || minimapBoxCache.contentwidth || 0);
+        var boxH = Number(minimapBoxCache.actuallayoutheight || minimapBoxCache.contentheight || 0);
+
+        if (!isFinite(boxW) || boxW <= 0 || !isFinite(boxH) || boxH <= 0) {
+            return null;
+        }
+
+        var localX = Number(panel.actualxoffset || 0);
+        var localY = Number(panel.actualyoffset || 0);
+        var minimapOffsetX = Number(minimapCache.actualxoffset || 0);
+        var minimapOffsetY = Number(minimapCache.actualyoffset || 0);
+        var containerOffsetX = Number(minimapContainerCache.actualxoffset || 0);
+        var containerOffsetY = Number(minimapContainerCache.actualyoffset || 0);
+
+        if (
+            !isFinite(localX) || !isFinite(localY) ||
+            !isFinite(minimapOffsetX) || !isFinite(minimapOffsetY) ||
+            !isFinite(containerOffsetX) || !isFinite(containerOffsetY)
+        ) {
+            return null;
+        }
+
+        return {
+            rawX: localX,
+            rawY: localY,
+            xPct: Core.clamp(((localX + minimapOffsetX + containerOffsetX) / boxW) * 100, 0, 100),
+            yPct: Core.clamp(((localY + minimapOffsetY + containerOffsetY) / boxH) * 100, 0, 100)
+        };
+    }
+
     function scan(nowMs) {
         var now = nowMs || Date.now();
         if (now - lastScan < DI.Config.CAMP_SCAN_MS) return;
         lastScan = now;
 
         var root = DI.DataProvider.refreshPanels();
-        var minimap = getMinimap(root);
-        if (!Core.isValidPanel(minimap)) return;
+        if (!refreshMinimapRefs(root)) return;
 
         var buttons = null;
         try {
-            buttons = minimap.FindChildrenWithClassTraverse("map_button");
+            buttons = minimapCache.FindChildrenWithClassTraverse("map_button");
         } catch (e) {
             return;
         }
 
         if (!buttons || !buttons.length) return;
-
-        var width = Number(minimap.actuallayoutwidth || minimap.contentwidth || 0);
-        var height = Number(minimap.actuallayoutheight || minimap.contentheight || 0);
-        if (!isFinite(width) || width <= 0 || !isFinite(height) || height <= 0) return;
 
         var seen = {};
 
@@ -71,65 +108,71 @@
             var type = getNeutralType(panel);
             if (!type) continue;
 
-            var x = Number(panel.actualxoffset || 0);
-            var y = Number(panel.actualyoffset || 0);
-            if (!isFinite(x) || !isFinite(y)) continue;
+            var pos = positionInOverlay(panel);
+            if (!pos) continue;
 
-            var key = keyFor(type, x, y, panel);
+            var key = keyFor(type, pos.rawX, pos.rawY, panel);
             var camp = State.map.camps[key];
-            var active = Core.safeClass(panel, "active");
+            var nativeActive = Core.safeClass(panel, "active");
             var respawnSeconds = DI.Config.NEUTRAL_RESPAWN_SECONDS[type] || 0;
 
             if (!camp) {
                 camp = {
                     id: key,
                     type: type,
-                    active: active,
-                    previousActive: active,
-                    seenActiveOnce: active,
+                    nativeActive: nativeActive,
+                    previousNativeActive: nativeActive,
+                    seenActiveOnce: nativeActive,
+                    estimatedReady: false,
                     respawnAt: null,
-                    confidence: active ? DI.Config.CONFIDENCE.CONFIRMED : DI.Config.CONFIDENCE.UNKNOWN,
-                    xPct: Core.clamp((x / width) * 100, 0, 100),
-                    yPct: Core.clamp((y / height) * 100, 0, 100),
+                    confidence: nativeActive
+                        ? DI.Config.CONFIDENCE.CONFIRMED
+                        : DI.Config.CONFIDENCE.UNKNOWN,
+                    xPct: pos.xPct,
+                    yPct: pos.yPct,
                     panel: panel,
                     lastSeenAt: now
                 };
                 State.map.camps[key] = camp;
             } else {
-                camp.previousActive = camp.active;
-                camp.active = active;
+                var previousNativeActive = camp.nativeActive;
+
+                camp.previousNativeActive = previousNativeActive;
+                camp.nativeActive = nativeActive;
                 camp.panel = panel;
-                camp.xPct = Core.clamp((x / width) * 100, 0, 100);
-                camp.yPct = Core.clamp((y / height) * 100, 0, 100);
+                camp.xPct = pos.xPct;
+                camp.yPct = pos.yPct;
                 camp.lastSeenAt = now;
 
-                if (active) {
+                if (nativeActive) {
                     camp.seenActiveOnce = true;
+                    camp.estimatedReady = false;
                     camp.respawnAt = null;
                     camp.confidence = DI.Config.CONFIDENCE.CONFIRMED;
                 } else if (
-                    camp.previousActive === true &&
+                    previousNativeActive === true &&
                     camp.seenActiveOnce &&
                     respawnSeconds > 0 &&
                     State.gameTimeKnown
                 ) {
-                    // Таймер создаётся только после явного перехода native UI active -> inactive.
-                    // Исчезновение panel само по себе не считается убийством кемпа.
+                    // Таймер создаётся только после явного native UI перехода active -> inactive.
+                    // Пропавший panel или отсутствие данных не считаются убийством кемпа.
                     camp.respawnAt = State.gameTime + respawnSeconds;
+                    camp.estimatedReady = false;
                     camp.confidence = DI.Config.CONFIDENCE.CONFIRMED;
                 }
             }
 
             if (camp.respawnAt != null && State.gameTimeKnown && State.gameTime >= camp.respawnAt) {
                 camp.respawnAt = null;
-                camp.active = true;
+                camp.estimatedReady = true;
                 camp.confidence = DI.Config.CONFIDENCE.ESTIMATED;
             }
 
             seen[key] = true;
         }
 
-        // Не делаем выводов из пропавших minimap panels.
+        // Пропавшие minimap panels не меняют игровое состояние.
         var keys = Object.keys(State.map.camps);
         for (var k = 0; k < keys.length; k++) {
             var existing = State.map.camps[keys[k]];
@@ -154,7 +197,9 @@
             list.push({
                 id: camp.id,
                 type: camp.type,
-                active: !!camp.active,
+                active: !!camp.nativeActive || !!camp.estimatedReady,
+                nativeActive: !!camp.nativeActive,
+                estimatedReady: !!camp.estimatedReady,
                 remaining: remaining,
                 confidence: camp.confidence,
                 xPct: camp.xPct,
