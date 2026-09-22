@@ -1,0 +1,19 @@
+# DeadlockInsight build output
+*_compiled/
+build/
+dist/
+*.vpk
+*.vpk.*
+*.log
+
+# Local tools / extracted game files
+tools/bin/
+vendor/
+extracted/
+game_dump/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
