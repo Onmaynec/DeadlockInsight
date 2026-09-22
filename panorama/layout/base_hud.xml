@@ -1,0 +1,24 @@
+<!-- DeadlockInsight: минимальный HUD override.
+     Мы не копируем весь штатный HUD: CitadelHud создаёт базовый интерфейс игры,
+     а DeadlockInsight подключает только свои стили и скрипты. -->
+<root>
+    <styles>
+        <include src="s2r://panorama/styles/base.vcss_c" />
+        <include src="s2r://panorama/styles/deadlock_insight.vcss_c" />
+    </styles>
+    <scripts>
+        <include src="s2r://panorama/scripts/di_config.vjs_c" />
+        <include src="s2r://panorama/scripts/di_core.vjs_c" />
+        <include src="s2r://panorama/scripts/di_state.vjs_c" />
+        <include src="s2r://panorama/scripts/di_data_provider.vjs_c" />
+        <include src="s2r://panorama/scripts/di_camps.vjs_c" />
+        <include src="s2r://panorama/scripts/di_objectives.vjs_c" />
+        <include src="s2r://panorama/scripts/di_recommendation.vjs_c" />
+        <include src="s2r://panorama/scripts/di_ui.vjs_c" />
+        <include src="s2r://panorama/scripts/di_bootstrap.vjs_c" />
+    </scripts>
+
+    <Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+        <CitadelHud id="Hud" hittest="false" />
+    </Panel>
+</root>
